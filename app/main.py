@@ -12,7 +12,7 @@ app = FastAPI(
 @app.get("/")
 def home():
     return {
-        "message": "Welcome to the GitOps Platform Demo",
+        "message": "GitOps deployment update successful",
         "platform": "OpenTofu + Kubernetes + GitOps",
         "status": "running"
     }
