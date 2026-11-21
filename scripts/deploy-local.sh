@@ -19,7 +19,7 @@ CHART="helm/gitops-platform"
 echo "==> Deploying image: $IMAGE"
 
 echo "==> Pulling image"
-docker pull "$IMAGE"
+docker pull --platform linux/amd64 "$IMAGE"
 
 echo "==> Loading image into kind"
 kind load docker-image "$IMAGE" --name "$CLUSTER"
