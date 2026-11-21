@@ -33,7 +33,7 @@ jobs:
           pip install pytest httpx
 
       - name: Run tests
-        run: pytest -v
+        run: python -m pytest -v
 
   build-and-push:
     name: Build and publish Docker image
