@@ -1,347 +1,539 @@
-# GitOps Platform with OpenTofu
+# GitOps Platform with OpenTofu, Kubernetes & Observability
 
-A local, portfolio-ready demonstration of infrastructure provisioning, containerization, Kubernetes deployment, Helm releases, and CI/CD using GitHub Actions and GitHub Container Registry (GHCR).
+A local DevOps platform demonstrating Infrastructure as Code,
+containerization, CI/CD automation, Kubernetes deployments, Helm-based
+release management, and monitoring with Prometheus, Grafana, and
+Alertmanager.
 
-> **Environment note:** This project is validated locally with a GCP-compatible emulator and a `kind` Kubernetes cluster. It does **not** provision or deploy to a real Google Cloud project or a real GKE cluster. The delivery workflow uses GitHub Actions to build and publish images, followed by an explicit local deployment command that updates Helm on `kind`.
+The project uses a local Kubernetes cluster created with **kind** and
+the **floci-gcp emulator** to validate supported Google Cloud
+infrastructure resources without requiring a real GCP account.
 
-## Project overview
-
-The project demonstrates a delivery path from a source-code change to a versioned container image and a running Kubernetes workload:
-
-1. A change is pushed to the `master` branch.
-2. GitHub Actions installs dependencies and runs the application tests.
-3. On pushes to `master`, the workflow builds a Docker image and publishes it to GHCR.
-4. The image is tagged with `latest` and the full commit SHA.
-5. The local deployment script pulls the selected SHA-tagged image, loads it into `kind`, upgrades the Helm release, waits for the rollout, and checks the application's health endpoint.
-
-The deployment uses a specific commit SHA rather than relying on the mutable `latest` tag. This makes it possible to identify exactly which application revision is running and to redeploy an earlier published version.
+------------------------------------------------------------------------
 
 ## Architecture
 
-```mermaid
-flowchart TD
-    A[Developer changes application code] --> B[Push to GitHub master]
-    B --> C[GitHub Actions]
-    C --> D[Run pytest]
-    D -->|Tests pass| E[Build Docker image]
-    E --> F[Publish image to GHCR]
-    F --> G[Tag: full commit SHA]
-    G --> H[Local deploy script]
-    H --> I[Pull image for linux/amd64]
-    I --> J[Load image into kind]
-    J --> K[Helm upgrade]
-    K --> L[Kubernetes Deployment]
-    L --> M[Two application replicas]
-    M --> N[Service: NodePort 30080]
-    N --> O[Local application endpoint]
+``` text
+                 Developer
+                     |
+                     v
+                 GitHub Repo
+                     |
+                GitHub Actions
+                     |
+              +------+------+
+              |             |
+          Run Tests     Build Docker
+                            |
+                            v
+                     GitHub Container
+                       Registry
+                            |
+                            v
+                     Local Deployment
+                            |
+                     Kubernetes (kind)
+                            |
+                     Helm Deployment
+                            |
+                   FastAPI Application
+                            |
+                  Prometheus Metrics
+                            |
+                     Prometheus
+                            |
+                  +---------+---------+
+                  |                   |
+                Grafana           Alertmanager
+               Dashboard          Alert Routing
 ```
 
-Infrastructure provisioning is a separate local workflow:
+### Infrastructure architecture
 
-```mermaid
-flowchart TD
-    A[OpenTofu configuration] --> B[Google provider]
-    B --> C[floci-gcp emulator]
-    C --> D[Cloud Storage bucket]
-    C --> E[Service account]
-    C --> F[Bucket IAM member binding]
+``` text
+                  OpenTofu
+                     |
+                     v
+               floci-gcp Emulator
+                     |
+             +-------+--------+
+             |                |
+        Cloud Storage    IAM Service Account
+             |
+       Bucket IAM Binding
 ```
 
-## Technology stack
+------------------------------------------------------------------------
 
-| Area | Technology |
-|---|---|
-| Infrastructure as Code | OpenTofu |
-| GCP API emulation | floci-gcp |
-| Application | Python, FastAPI, Uvicorn |
-| Containerization | Docker |
-| Local Kubernetes | kind |
-| Kubernetes packaging | Helm |
-| CI/CD | GitHub Actions |
-| Container registry | GitHub Container Registry |
-| Automated tests | pytest |
+## Technology Stack
 
-## Repository layout
+  Category                  Technologies
+  ------------------------- ----------------------------------
+  Infrastructure as Code    OpenTofu
+  Cloud emulation           floci-gcp
+  Containerization          Docker
+  Container registry        GitHub Container Registry (GHCR)
+  Orchestration             Kubernetes (kind)
+  Package management        Helm
+  CI/CD                     GitHub Actions
+  Application               Python, FastAPI
+  Testing                   Pytest
+  Monitoring                Prometheus
+  Visualization             Grafana
+  Alert management          Alertmanager
+  Metrics instrumentation   prometheus-client
 
-```text
-.
-├── .github/
-│   └── workflows/
-│       └── ci-cd.yaml
-├── app/
-│   ├── __init__.py
-│   ├── main.py
-│   └── requirements.txt
-├── helm/
-│   └── gitops-platform/
-│       ├── Chart.yaml
-│       ├── values.yaml
-│       └── templates/
-├── infra/
-│   ├── versions.tf
-│   ├── providers.tf
-│   └── main.tf
-├── k8s/
-│   ├── deployment.yaml
-│   └── service.yaml
-├── scripts/
-│   └── deploy-local.sh
-├── tests/
-│   └── test_main.py
-├── .gitignore
-├── Dockerfile
-├── docker-compose.floci.yml
-└── kind-config.yaml
-```
+------------------------------------------------------------------------
 
-Some generated Helm chart files and local runtime data are omitted from this overview.
+## Project Features
 
-## Application endpoints
+### 1. Infrastructure as Code
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /` | Application welcome message and status |
-| `GET /health` | Health check used by Kubernetes probes and the deployment script |
-| `GET /version` | Application version and runtime timestamp |
+Infrastructure resources are provisioned using OpenTofu with the Google
+provider configured to communicate with the local floci-gcp emulator.
 
-The application listens on port `8000` inside the container. The Kubernetes Service exposes it locally at:
+Resources provisioned:
 
-- Application: `http://localhost:30080/`
-- Health check: `http://localhost:30080/health`
-- Version: `http://localhost:30080/version`
+-   Google Cloud Storage bucket
+-   Google Cloud IAM service account
+-   Storage bucket IAM binding
 
-## Prerequisites
+Infrastructure is managed declaratively through OpenTofu configuration
+files.
 
-Install the following tools on your Linux machine:
+**Commands:**
 
-- Docker
-- kind
-- kubectl
-- Helm
-- OpenTofu
-- Git
-- Python 3.12 (recommended for local testing)
-
-You also need a GitHub repository with GitHub Actions enabled. The workflow uses the built-in `GITHUB_TOKEN` to publish packages; it grants the `packages: write` permission to the image publishing job.
-
-## Run locally
-
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/zeeshan40132/gke-gitops-platform.git
-cd gke-gitops-platform
-```
-
-### 2. Start the GCP emulator
-
-Start the emulator using Docker Compose:
-
-```bash
-docker compose -f docker-compose.floci.yml up -d
-```
-
-Check the emulator's legacy health endpoint:
-
-```bash
-curl -i http://localhost:4588/_floci-gcp/health
-```
-
-The emulator's API surface is not identical to Google Cloud. The project uses only the emulator endpoints and resource operations that have been tested.
-
-### 3. Provision the demo infrastructure with OpenTofu
-
-```bash
+``` bash
 cd infra
+
 tofu init
 tofu validate
 tofu plan
 tofu apply
 ```
 
-Review the plan before applying. The current configuration creates:
+### 2. FastAPI Application
 
-- A Cloud Storage bucket.
-- A service account.
-- A bucket-level IAM member binding granting `roles/storage.objectAdmin` to that service account.
+A lightweight FastAPI application provides:
 
-The Google provider is configured to use the local emulator endpoints. The configured project name is `floci-local`; this is not a real GCP project.
+  Endpoint     Purpose
+  ------------ ---------------------------------
+  `/`          Application home and status
+  `/health`    Health check endpoint
+  `/version`   Application version information
+  `/metrics`   Prometheus metrics
 
-Return to the repository root:
+The application includes HTTP request counters, error counters, and
+request latency histograms.
 
-```bash
+### 3. Docker Containerization
+
+The application is packaged into a Docker image using a custom
+Dockerfile.
+
+Implementation includes:
+
+-   Python slim base image
+-   Dependency installation
+-   Non-root application user
+-   Exposed application port
+-   Containerized FastAPI server
+
+The image is published to GitHub Container Registry.
+
+**Image:**
+
+`ghcr.io/zeeshan40132/gke-gitops-platform`
+
+### 4. Kubernetes Deployment
+
+The application is deployed to a local Kubernetes cluster created using
+kind.
+
+Features include:
+
+-   Two application replicas
+-   Kubernetes Deployment and Service resources
+-   NodePort service exposure
+-   Readiness and liveness probes
+-   CPU and memory requests and limits
+-   Automatic pod replacement
+-   Deployment scaling
+
+The application is accessible locally at:
+
+`http://localhost:30080`
+
+### 5. Helm-Based Deployment
+
+A custom Helm chart manages the application's Kubernetes resources.
+
+The chart includes configurable values for:
+
+-   Replica count
+-   Container image and tag
+-   Service configuration
+-   Health probes
+-   Resource requests and limits
+-   Deployment revision history
+
+Helm also provides release history and rollback functionality.
+
+**Useful commands:**
+
+``` bash
+helm list
+
+helm history gitops-platform
+
+helm upgrade gitops-platform helm/gitops-platform
+
+helm rollback gitops-platform <REVISION>
+```
+
+### 6. GitHub Actions CI/CD
+
+GitHub Actions automates application testing and Docker image
+publishing.
+
+The pipeline consists of two jobs:
+
+**Test Application** - Checks out the repository - Sets up Python -
+Installs dependencies - Runs Pytest
+
+**Build and Publish Docker Image** - Runs after successful tests -
+Builds the Docker image - Authenticates to GHCR using GitHub Actions'
+`GITHUB_TOKEN` - Publishes the image to GitHub Container Registry
+
+Images are published with: - `latest` tag - Git commit SHA tag
+
+The workflow runs on pushes and pull requests targeting the `master`
+branch. Image publishing is performed on pushes.
+
+### 7. Monitoring with Prometheus
+
+The monitoring stack is installed using the `kube-prometheus-stack` Helm
+chart.
+
+Prometheus collects application metrics through a Kubernetes
+ServiceMonitor.
+
+The application exposes:
+
+-   `http_requests_total`
+-   `http_errors_total`
+-   `http_request_duration_seconds`
+
+Prometheus successfully scrapes both application replicas.
+
+The monitoring stack also collects Kubernetes and infrastructure-related
+metrics from supported exporters and components.
+
+### 8. Grafana Dashboard
+
+Grafana provides a dashboard for monitoring application performance.
+
+The custom dashboard includes:
+
+  Panel                     Metric
+  ------------------------- ------------------------------------
+  Total Requests/sec        HTTP request rate
+  Error Requests/sec        HTTP error rate
+  95th Percentile Latency   Application request latency
+  Available Replicas        Kubernetes deployment availability
+
+Grafana is accessible locally through port forwarding:
+
+``` bash
+kubectl port-forward -n monitoring svc/monitoring-grafana 3001:80
+```
+
+Open `http://localhost:3001`.
+
+### 9. Prometheus Alerting and Alertmanager
+
+Three custom Prometheus alert rules monitor application health.
+
+  ----------------------------------------------------------------------------
+  Alert                              Condition            Severity
+  ---------------------------------- -------------------- --------------------
+  `HighApplicationErrorRate`         Error rate exceeds   Warning
+                                     10%                  
+
+  `HighApplicationLatency`           95th percentile      Warning
+                                     latency exceeds 500  
+                                     ms                   
+
+  `ApplicationReplicasUnavailable`   Fewer than two       Critical
+                                     replicas available   
+  ----------------------------------------------------------------------------
+
+The rules use a two-minute pending period before firing.
+
+**Alert testing**
+
+The replica availability alert was tested by scaling the application
+from two replicas to one:
+
+``` bash
+kubectl scale deployment gitops-platform-app --replicas=1
+```
+
+Prometheus detected the reduced replica count and fired the
+`ApplicationReplicasUnavailable` alert.
+
+Alertmanager successfully received the critical alert.
+
+The deployment was subsequently restored:
+
+``` bash
+kubectl scale deployment gitops-platform-app --replicas=2
+```
+
+This validated the monitoring and alert delivery path:
+
+``` text
+Kubernetes
+    |
+    v
+kube-state-metrics
+    |
+    v
+Prometheus
+    |
+    v
+Prometheus Alert Rule
+    |
+    v
+Alertmanager
+```
+
+Alertmanager receives and manages alerts. External email or webhook
+notification delivery has not been configured.
+
+------------------------------------------------------------------------
+
+## Screenshots
+
+Project screenshots are stored in `docs/screenshots/`.
+
+### Infrastructure
+
+![OpenTofu infrastructure provisioning](docs/screenshots/tofu.png)
+
+*OpenTofu provisioning the infrastructure resources through the local
+floci-gcp emulator.*
+
+### CI/CD
+
+![GitHub Actions workflow](docs/screenshots/githubactions.png)
+
+*GitHub Actions workflow showing the automated CI/CD pipeline.*
+
+### Kubernetes and Helm
+
+![Kubernetes deployment](docs/screenshots/kubernetes.png)
+
+*Local Kubernetes deployment and application workloads.*
+
+![Helm release](docs/screenshots/helm.png)
+
+*Helm release management for the application.*
+
+### Observability
+
+![Prometheus targets](docs/screenshots/prometheus-targets.png)
+
+*Prometheus targets, including the application metrics endpoints.*
+
+![Grafana dashboard](docs/screenshots/grafana-dashboard.png)
+
+*Custom Grafana dashboard for application monitoring.*
+
+![Prometheus alert rules](docs/screenshots/prometheus-alert-rules.png)
+
+*Custom Prometheus alert rules.*
+
+![Alertmanager alert](docs/screenshots/alertmanager-alert.png)
+
+*Alertmanager receiving the application replica availability alert.*
+
+------------------------------------------------------------------------
+
+## Repository Structure
+
+``` text
+gke-gitops-platform/
+│
+├── .github/
+│   └── workflows/
+│       └── ci-cd.yaml
+│
+├── app/
+│   ├── main.py
+│   └── requirements.txt
+│
+├── infra/
+│   ├── main.tf
+│   ├── providers.tf
+│   └── versions.tf
+│
+├── helm/
+│   └── gitops-platform/
+│       ├── Chart.yaml
+│       ├── values.yaml
+│       └── templates/
+│
+├── k8s/
+│   ├── deployment.yaml
+│   └── service.yaml
+│
+├── monitoring/
+│   ├── values.yaml
+│   ├── service-monitor.yaml
+│   └── alert-rules.yaml
+│
+├── scripts/
+│   └── deploy-local.sh
+│
+├── tests/
+│   └── test_main.py
+│
+├── docs/
+│   └── screenshots/
+│
+├── Dockerfile
+├── docker-compose.floci.yml
+├── kind-config.yaml
+├── .gitignore
+└── README.md
+```
+
+------------------------------------------------------------------------
+
+## Running Locally
+
+### Prerequisites
+
+Install the following tools:
+
+-   Docker
+-   kind
+-   kubectl
+-   Helm
+-   OpenTofu
+-   Git
+-   Python 3
+
+### 1. Clone the repository
+
+``` bash
+git clone https://github.com/zeeshan40132/gke-gitops-platform.git
+
+cd gke-gitops-platform
+```
+
+### 2. Start the local GCP emulator
+
+``` bash
+docker compose -f docker-compose.floci.yml up -d
+```
+
+### 3. Provision infrastructure
+
+``` bash
+cd infra
+
+tofu init
+tofu plan
+tofu apply
+
 cd ..
 ```
 
-### 4. Create the local kind cluster
+### 4. Create the local Kubernetes cluster
 
-From the repository root:
-
-```bash
+``` bash
 kind create cluster --config kind-config.yaml
-kubectl get nodes
 ```
 
-The cluster is named `gitops-local`.
+### 5. Deploy the application
 
-### 5. Run application tests
+Use the included deployment script with an image tag:
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r app/requirements.txt pytest httpx
-python -m pytest -v
+``` bash
+bash scripts/deploy-local.sh latest
 ```
 
-### 6. Build and test the Docker image
+### 6. Access the application
 
-```bash
-docker build -t gitops-platform-app:1.0.0 .
-docker run --rm -p 8000:8000 gitops-platform-app:1.0.0
+`http://localhost:30080`
+
+### 7. Access monitoring
+
+**Prometheus**
+
+``` bash
+kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090
 ```
 
-In another terminal, test the endpoints:
+`http://localhost:9090`
 
-```bash
-curl http://localhost:8000/
-curl http://localhost:8000/health
-curl http://localhost:8000/version
+**Grafana**
+
+``` bash
+kubectl port-forward -n monitoring svc/monitoring-grafana 3001:80
 ```
 
-Stop the foreground container with `Ctrl+C`.
+`http://localhost:3001`
 
-### 7. Deploy with Helm
+**Alertmanager**
 
-The GitHub Actions workflow publishes the image to GHCR. The package is public in the current project setup, so a local registry login is not needed to pull it.
-
-Deploy a specific published commit image:
-
-```bash
-bash scripts/deploy-local.sh sha-<FULL_COMMIT_SHA>
+``` bash
+kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-alertmanager 9093:9093
 ```
 
-For example, the following commit was successfully deployed during project validation:
+`http://localhost:9093`
 
-```bash
-bash scripts/deploy-local.sh sha-11fdaa0613f1305b69a3e96a7628830cdd3fdfd0
-```
+------------------------------------------------------------------------
 
-The script:
+## Security and Best Practices
 
-1. Pulls the selected image for `linux/amd64`.
-2. Loads the image into the `gitops-local` kind cluster.
-3. Runs `helm upgrade --install` with the selected image repository and tag.
-4. Waits for the Kubernetes Deployment rollout.
-5. Checks `http://localhost:30080/health`.
+-   OpenTofu state files and local emulator data are excluded from Git.
+-   Environment files and secrets are excluded through `.gitignore`.
+-   GitHub Actions uses the built-in `GITHUB_TOKEN` for GHCR
+    authentication.
+-   The FastAPI container runs as a non-root user.
+-   Kubernetes workloads have resource requests and limits.
+-   Health probes are configured for application availability.
+-   Application metrics are exposed through a dedicated endpoint.
 
-Verify the deployment:
+**Important:** Never commit OpenTofu state files, credentials, access
+tokens, or generated secret values.
 
-```bash
-kubectl get pods -l app=gitops-platform-app
-kubectl get deployment gitops-platform-app \
-  -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
-curl -i http://localhost:30080/health
-curl http://localhost:30080/
-```
+------------------------------------------------------------------------
 
-## CI/CD workflow
+## Implementation Scope and Limitations
 
-Workflow file: `.github/workflows/ci-cd.yaml`
+This repository demonstrates a local DevOps and GitOps-oriented
+platform.
 
-The workflow has two jobs:
+-   Kubernetes deployment and monitoring are validated on a local kind
+    cluster, not on Google Kubernetes Engine.
+-   Google Cloud infrastructure resources are provisioned through the
+    floci-gcp emulator, not a real GCP project.
+-   Emulator support depends on the individual API and resource
+    implementation.
+-   Argo CD core was installed during development but scaled down. The
+    current application and monitoring deployments are managed directly
+    through Helm, rather than an active Argo CD reconciliation workflow.
+-   Alertmanager receives and manages Prometheus alerts, but external
+    notification delivery has not been configured.
 
-### Test application
+These boundaries distinguish locally verified functionality from
+production cloud deployment.
 
-- Runs on pushes and pull requests targeting `master`.
-- Checks out the repository.
-- Sets up Python 3.12.
-- Installs application and test dependencies.
-- Runs `python -m pytest -v`.
-
-### Build and publish image
-
-- Runs only on pushes (after the test job succeeds).
-- Authenticates to GHCR using `GITHUB_TOKEN`.
-- Builds the Docker image for `linux/amd64`.
-- Publishes the `latest` tag and a full commit-SHA tag.
-
-The commit-SHA tag provides an immutable version reference for deployment and rollback, whereas `latest` is a moving tag.
-
-## Rollback
-
-To roll back, deploy a previously published commit-SHA image using the same script:
-
-```bash
-bash scripts/deploy-local.sh sha-<PREVIOUS_FULL_COMMIT_SHA>
-```
-
-This pulls the previous image, loads it into kind, and updates the Helm release to that image. The previous image must still exist in GHCR.
-
-Inspect Helm release history:
-
-```bash
-helm history gitops-platform
-```
-
-You can also inspect the currently deployed image:
-
-```bash
-kubectl get deployment gitops-platform-app \
-  -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
-```
-
-## Kubernetes configuration
-
-The Helm chart configures:
-
-- Two application replicas by default.
-- A NodePort Service on port `30080`.
-- Readiness and liveness probes against `/health`.
-- CPU and memory requests and limits.
-- A configurable image repository and tag.
-- A revision history limit for the Deployment.
-
-The local kind cluster uses a host port mapping so the application is reachable at `localhost:30080`.
-
-## Security and operational notes
-
-- OpenTofu state files, local emulator data, virtual environments, and environment files are excluded through `.gitignore`.
-- The OpenTofu state used in this local demonstration is stored locally. It is not configured with a remote state backend.
-- The application container runs as a non-root user.
-- The CI workflow uses GitHub's temporary `GITHUB_TOKEN` rather than a hard-coded registry password.
-- The GHCR package is public in the current setup. Do not publish sensitive application images publicly.
-- Do not commit real cloud credentials, access tokens, private keys, or Terraform/OpenTofu state files.
-- The fake emulator access token in the provider configuration is for local emulator use only; it is not a real Google Cloud credential.
-
-## Validation evidence
-
-The following project milestones have been completed and tested:
-
-- OpenTofu successfully applied the three emulator-backed resources: bucket, service account, and IAM member binding.
-- The FastAPI application passed its automated tests.
-- The Docker image was built and ran locally.
-- The application was deployed to kind with two healthy replicas.
-- Helm installed and upgraded the application release.
-- GitHub Actions successfully ran tests and published images to GHCR.
-- A commit-SHA image was pulled, loaded into kind, and deployed through Helm.
-- The deployed application returned HTTP 200 from `/health`.
-- The deployed root endpoint returned the updated message: `GitOps deployment update successful`.
-- The Kubernetes Deployment reported the exact image tag `sha-11fdaa0613f1305b69a3e96a7628830cdd3fdfd0`.
-
-## Current limitations and future improvements
-
-This repository is a local demonstration and intentionally does not claim production GKE deployment.
-
-Possible next improvements:
-
-- Replace the local emulator with a real GCP project and provision a real GKE cluster.
-- Configure remote OpenTofu state with locking and access controls.
-- Add automated security scanning for dependencies and container images.
-- Add a staging environment and a controlled promotion process.
-- Introduce a GitOps controller such as Argo CD after validating the required cluster networking and resource budget.
-- Add monitoring, metrics, centralized logs, and alerting.
-- Add image signing and software bill of materials (SBOM) generation.
+------------------------------------------------------------------------
 
 ## Author
 
@@ -349,4 +541,5 @@ Possible next improvements:
 
 GitHub: [@zeeshan40132](https://github.com/zeeshan40132)
 
-Repository: [gke-gitops-platform](https://github.com/zeeshan40132/gke-gitops-platform)
+Repository:
+[gke-gitops-platform](https://github.com/zeeshan40132/gke-gitops-platform)
